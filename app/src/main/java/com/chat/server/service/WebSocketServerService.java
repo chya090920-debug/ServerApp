@@ -151,7 +151,7 @@ public class WebSocketServerService extends Service {
         private volatile boolean running = false;
 
         public ChatWebSocketServer(int port) {
-            super(new InetSocketAddress(port));
+            super(new InetSocketAddress("0.0.0.0", port));
         }
 
         public boolean isRunning() {
