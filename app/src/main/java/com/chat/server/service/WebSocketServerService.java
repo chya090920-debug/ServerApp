@@ -152,8 +152,19 @@ public class WebSocketServerService extends Service {
     }
 
     private class ChatWebSocketServer extends WebSocketServer {
+        private volatile boolean running = false;
+
         public ChatWebSocketServer(int port) {
             super(new InetSocketAddress(port));
+        }
+
+        /**
+         * 检查服务器是否正在运行
+         * Java-WebSocket库的WebSocketServer没有内置isRunning()方法，
+         * 因此我们需要自己维护运行状态
+         */
+        public boolean isRunning() {
+            return running && getAddress() != null;
         }
 
         @Override
@@ -226,7 +237,14 @@ public class WebSocketServerService extends Service {
 
         @Override
         public void onStart() {
+            running = true;
             Log.d(TAG, "Server started successfully");
+        }
+
+        @Override
+        public void onStop() {
+            running = false;
+            Log.d(TAG, "Server stopped");
         }
     }
 
