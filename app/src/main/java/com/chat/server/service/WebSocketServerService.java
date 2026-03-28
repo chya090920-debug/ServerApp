@@ -450,7 +450,7 @@ public class WebSocketServerService extends Service {
             if (client != null && client.getConnection() != null && client.getConnection().isOpen()) {
                 client.getConnection().send(message);
             }
-        }
+        } 
     }
 
     private void sendResponse(WebSocket conn, String action, JsonObject data) {
