@@ -7,7 +7,6 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
-import android.content.SharedPreferences;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
@@ -16,7 +15,6 @@ import android.util.Log;
 
 import androidx.core.app.NotificationCompat;
 
-import com.chat.server.R;
 import com.chat.server.model.ChatMessage;
 import com.chat.server.model.ChatRoom;
 import com.chat.server.model.ClientInfo;
@@ -31,7 +29,6 @@ import org.java_websocket.server.WebSocketServer;
 
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -55,7 +52,6 @@ public class WebSocketServerService extends Service {
     private long serverStartTime;
     private ServerStatusListener statusListener;
     
-    // 公共聊天室ID
     public static final String PUBLIC_ROOM_ID = "000000000000";
 
     public interface ServerStatusListener {
@@ -158,12 +154,8 @@ public class WebSocketServerService extends Service {
             super(new InetSocketAddress(port));
         }
 
-        /**
-         * 检查服务器是否正在运行
-         * Java-WebSocket库的WebSocketServer没有内置isRunning()方法，
-         * 因此我们需要自己维护运行状态
-         */
         public boolean isRunning() {
+            // 通过判断 getAddress() 是否为空来确定服务器是否真正绑定并启动
             return running && getAddress() != null;
         }
 
@@ -176,7 +168,6 @@ public class WebSocketServerService extends Service {
         public void onClose(WebSocket conn, int code, String reason, boolean remote) {
             ClientInfo client = findClientByConnection(conn);
             if (client != null) {
-                // 从所有房间移除
                 for (String roomId : client.getJoinedRooms()) {
                     ChatRoom room = rooms.get(roomId);
                     if (room != null) {
@@ -195,35 +186,17 @@ public class WebSocketServerService extends Service {
             try {
                 JsonObject json = JsonParser.parseString(message).getAsJsonObject();
                 String action = json.get("action").getAsString();
-                
                 ClientInfo client = findClientByConnection(conn);
                 
                 switch (action) {
-                    case "auth":
-                        handleAuth(conn, json);
-                        break;
-                    case "join_room":
-                        if (client != null) handleJoinRoom(client, json);
-                        break;
-                    case "leave_room":
-                        if (client != null) handleLeaveRoom(client, json);
-                        break;
-                    case "send_message":
-                        if (client != null) handleSendMessage(client, json);
-                        break;
-                    case "create_room":
-                        if (client != null) handleCreateRoom(client, json);
-                        break;
-                    case "typing":
-                        if (client != null) handleTyping(client, json);
-                        break;
-                    case "recall_message":
-                        if (client != null) handleRecallMessage(client, json);
-                        break;
-                    case "heartbeat":
-                        // 心跳响应
-                        sendResponse(conn, "heartbeat_ack", null);
-                        break;
+                    case "auth": handleAuth(conn, json); break;
+                    case "join_room": if (client != null) handleJoinRoom(client, json); break;
+                    case "leave_room": if (client != null) handleLeaveRoom(client, json); break;
+                    case "send_message": if (client != null) handleSendMessage(client, json); break;
+                    case "create_room": if (client != null) handleCreateRoom(client, json); break;
+                    case "typing": if (client != null) handleTyping(client, json); break;
+                    case "recall_message": if (client != null) handleRecallMessage(client, json); break;
+                    case "heartbeat": sendResponse(conn, "heartbeat_ack", null); break;
                 }
             } catch (Exception e) {
                 Log.e(TAG, "Error processing message", e);
@@ -240,11 +213,11 @@ public class WebSocketServerService extends Service {
             running = true;
             Log.d(TAG, "Server started successfully");
         }
-
+        
         @Override
-        public void onStop() {
+        public void stop() throws InterruptedException {
             running = false;
-            Log.d(TAG, "Server stopped");
+            super.stop();
         }
     }
 
@@ -259,27 +232,19 @@ public class WebSocketServerService extends Service {
 
     private void handleAuth(WebSocket conn, JsonObject json) {
         String token = json.get("token").getAsString();
-        
-        // 检查是否被封禁
         if (bannedTokens.contains(token)) {
             sendResponse(conn, "auth_failed", createErrorData("您已被封禁"));
             conn.close();
             return;
         }
-
         ClientInfo client = new ClientInfo(token, conn);
-        
-        // 检查是否是重连
         ClientInfo oldClient = clients.get(token);
         if (oldClient != null) {
-            // 继承之前的状态
             client.setDisplayName(oldClient.getDisplayName());
             client.setMuted(oldClient.isMuted());
         }
-        
         clients.put(token, client);
         notifyClientCountChanged();
-
         JsonObject data = new JsonObject();
         data.addProperty("success", true);
         data.addProperty("displayName", client.getDisplayName());
@@ -289,34 +254,25 @@ public class WebSocketServerService extends Service {
     private void handleJoinRoom(ClientInfo client, JsonObject json) {
         String roomId = json.get("roomId").getAsString();
         String password = json.has("password") ? json.get("password").getAsString() : "";
-        
         ChatRoom room = rooms.get(roomId);
         if (room == null) {
             sendResponse(client.getConnection(), "join_failed", createErrorData("房间不存在"));
             return;
         }
-
         if (room.hasPassword() && !room.verifyPassword(password)) {
             sendResponse(client.getConnection(), "join_failed", createErrorData("密码错误"));
             return;
         }
-
         room.addMember(client.getToken());
         client.getJoinedRooms().add(roomId);
-
-        // 发送加入成功响应
         JsonObject data = new JsonObject();
         data.addProperty("roomId", roomId);
         data.addProperty("success", true);
         sendResponse(client.getConnection(), "join_success", data);
-
-        // 发送历史消息
         JsonObject historyData = new JsonObject();
         historyData.addProperty("roomId", roomId);
         historyData.add("messages", gson.toJsonTree(room.getMessages()));
         sendResponse(client.getConnection(), "room_history", historyData);
-
-        // 广播加入消息
         broadcastJoinMessage(room, client);
         notifyRoomCountChanged();
     }
@@ -337,31 +293,22 @@ public class WebSocketServerService extends Service {
             sendResponse(client.getConnection(), "send_failed", createErrorData("您已被禁言"));
             return;
         }
-
         String roomId = json.get("roomId").getAsString();
         String content = json.get("content").getAsString();
         int type = json.has("type") ? json.get("type").getAsInt() : 0;
-
         ChatRoom room = rooms.get(roomId);
         if (room == null) return;
-
         ChatMessage message = new ChatMessage(roomId, client.getToken(), client.getDisplayName(), content, type);
         room.addMessage(message);
-
-        // 广播消息给房间内所有人
         broadcastMessage(room, message);
     }
 
     private void handleCreateRoom(ClientInfo client, JsonObject json) {
         String password = json.has("password") ? json.get("password").getAsString() : "";
         String roomId = generateRoomId();
-
         ChatRoom room = new ChatRoom(roomId, client.getToken());
-        if (!password.isEmpty()) {
-            room.setPassword(password);
-        }
+        if (!password.isEmpty()) { room.setPassword(password); }
         rooms.put(roomId, room);
-
         JsonObject data = new JsonObject();
         data.addProperty("roomId", roomId);
         data.addProperty("success", true);
@@ -372,26 +319,21 @@ public class WebSocketServerService extends Service {
     private void handleTyping(ClientInfo client, JsonObject json) {
         String roomId = json.get("roomId").getAsString();
         boolean isTyping = json.get("isTyping").getAsBoolean();
-        
         ChatRoom room = rooms.get(roomId);
         if (room == null) return;
-
         JsonObject data = new JsonObject();
         data.addProperty("roomId", roomId);
         data.addProperty("userToken", client.getToken());
         data.addProperty("userName", client.getDisplayName());
         data.addProperty("isTyping", isTyping);
-
         broadcastToRoom(room, "user_typing", data, client.getToken());
     }
 
     private void handleRecallMessage(ClientInfo client, JsonObject json) {
         String roomId = json.get("roomId").getAsString();
         String messageId = json.get("messageId").getAsString();
-
         ChatRoom room = rooms.get(roomId);
         if (room == null) return;
-
         for (ChatMessage msg : room.getMessages()) {
             if (msg.getId().equals(messageId) && msg.getSenderToken().equals(client.getToken())) {
                 msg.setRecalled(true);
@@ -407,14 +349,9 @@ public class WebSocketServerService extends Service {
     private String generateRoomId() {
         Random random = new Random();
         StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < 12; i++) {
-            sb.append(random.nextInt(10));
-        }
-        // 确保不重复
+        for (int i = 0; i < 12; i++) { sb.append(random.nextInt(10)); }
         String id = sb.toString();
-        if (rooms.containsKey(id)) {
-            return generateRoomId();
-        }
+        if (rooms.containsKey(id)) { return generateRoomId(); }
         return id;
     }
 
@@ -443,7 +380,6 @@ public class WebSocketServerService extends Service {
         response.addProperty("action", action);
         response.add("data", data);
         String message = gson.toJson(response);
-
         for (String token : room.getMembers()) {
             if (excludeToken != null && token.equals(excludeToken)) continue;
             ClientInfo client = clients.get(token);
@@ -456,9 +392,7 @@ public class WebSocketServerService extends Service {
     private void sendResponse(WebSocket conn, String action, JsonObject data) {
         JsonObject response = new JsonObject();
         response.addProperty("action", action);
-        if (data != null) {
-            response.add("data", data);
-        }
+        if (data != null) { response.add("data", data); }
         conn.send(gson.toJson(response));
     }
 
@@ -477,22 +411,17 @@ public class WebSocketServerService extends Service {
     private void notifyClientCountChanged() {
         handler.post(() -> {
             updateNotification();
-            if (statusListener != null) {
-                statusListener.onClientCountChanged(clients.size());
-            }
+            if (statusListener != null) { statusListener.onClientCountChanged(clients.size()); }
         });
     }
 
     private void notifyRoomCountChanged() {
         handler.post(() -> {
             updateNotification();
-            if (statusListener != null) {
-                statusListener.onRoomCountChanged(rooms.size());
-            }
+            if (statusListener != null) { statusListener.onRoomCountChanged(rooms.size()); }
         });
     }
 
-    // 管理功能
     public void banClient(String token) {
         bannedTokens.add(token);
         ClientInfo client = clients.get(token);
@@ -527,26 +456,11 @@ public class WebSocketServerService extends Service {
         }
     }
 
-    // 获取状态信息
-    public int getOnlineCount() {
-        return clients.size();
-    }
-
-    public int getRoomCount() {
-        return rooms.size();
-    }
-
-    public long getServerStartTime() {
-        return serverStartTime;
-    }
-
-    public List<ClientInfo> getOnlineClients() {
-        return new ArrayList<>(clients.values());
-    }
-
-    public boolean isServerRunning() {
-        return server != null && server.isRunning();
-    }
+    public int getOnlineCount() { return clients.size(); }
+    public int getRoomCount() { return rooms.size(); }
+    public long getServerStartTime() { return serverStartTime; }
+    public List<ClientInfo> getOnlineClients() { return new ArrayList<>(clients.values()); }
+    public boolean isServerRunning() { return server != null && server.isRunning(); }
 
     @Override
     public void onDestroy() {
