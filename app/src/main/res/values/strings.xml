@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">聊天服务器</string>
+    <string name="server_status">服务器状态</string>
+    <string name="online_count">在线人数</string>
+    <string name="room_count">活跃房间</string>
+    <string name="uptime">运行时间</string>
+    <string name="public_chat">公共聊天室</string>
+    <string name="send_announcement">发送公告</string>
+    <string name="announcement_hint">输入公告内容...</string>
+    <string name="online_clients">在线用户</string>
+</resources>
